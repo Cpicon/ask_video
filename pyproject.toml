@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ask-video"
+version = "0.1.0"
+description = "Ask questions about YouTube videos using AI"
+requires-python = ">=3.12"
+dependencies = [
+    "typer>=0.9",
+    "rich>=13.0",
+    "yt-dlp>=2024.0",
+    "youtube-transcript-api>=0.6",
+    "google-genai>=1.0",
+]
+
+[project.optional-dependencies]
+whisper = ["openai-whisper>=20230918"]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+]
+
+[project.scripts]
+ask_video = "ask_video.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ask_video"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
