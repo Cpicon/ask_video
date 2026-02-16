@@ -24,6 +24,7 @@
 - **Clear Language:** Use simple, clear language and avoid overly complex jargon to make the tool accessible to a broad audience.
 
 ## Code & Contribution Standards
+- **Dependency Management:** Use `uv` for all package management and environment handling.
 - **Type Safety:** Enforce type hints throughout the codebase to ensure compatibility with `mypy` and improve code reliability.
 - **Style Enforcement:** Adhere strictly to PEP 8 style guidelines, enforced by tools like `ruff` or `black`.
 - **Testing:** Maintain high test coverage with unit tests for all core logic using `pytest`.

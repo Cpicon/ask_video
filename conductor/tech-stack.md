@@ -5,6 +5,7 @@
 - **CLI Framework:** Typer
 - **UI/Formatting:** Rich
 - **Build System:** Hatchling
+- **Package Manager:** uv
 
 ## Data Processing
 - **Video Source:** yt-dlp, youtube-transcript-api
