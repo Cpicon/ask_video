@@ -8,7 +8,7 @@
 - [ ] Task: Conductor - User Manual Verification 'Test Infrastructure Setup (Live)' (Protocol in workflow.md)
 
 ## Phase 2: Implement Live Test Logic
-- [ ] Task: Write the `test_e2e_live_flow` test case.
+- [~] Task: Write the `test_e2e_live_flow` test case.
     - [ ] Task: Use `CliRunner` with `env={"GEMINI_API_KEY": "..."}` (passed from real env).
     - [ ] Task: Run against a stable YouTube video (e.g., "Me at the zoo" - `jNQXAC9IVRw`).
     - [ ] Task: Send input `What is this video about?\nexit\n`.
@@ -23,3 +23,6 @@
     - [ ] Task: Verify it passes with a valid key.
 - [ ] Task: specific check to ensure 80% coverage is maintained or improved.
 - [ ] Task: Conductor - User Manual Verification 'Execution and Refinement' (Protocol in workflow.md)
+
+## Phase: Review Fixes
+- [x] Task: Apply review suggestions 75efc63
