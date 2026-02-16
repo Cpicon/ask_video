@@ -219,7 +219,7 @@ class VideoSource(Protocol):
         ...
 
     def fetch_transcript(self, url: str) -> str | None:
-        """Try to get an existing transcript. Returns None if unavailable."""
+        """Try to get an existing transcript with timestamps. Returns None if unavailable."""
         ...
 
     def download_audio(self, url: str, output_dir: Path) -> Path:
@@ -229,7 +229,7 @@ class VideoSource(Protocol):
 
 class Transcriber(Protocol):
     def transcribe(self, audio_path: Path) -> str:
-        """Transcribe an audio file to text."""
+        """Transcribe an audio file to timestamped text."""
         ...
 
 
@@ -524,13 +524,13 @@ def test_extract_id_invalid(source):
 
 
 @patch("ask_video.sources.youtube.YouTubeTranscriptApi")
-def test_fetch_transcript_returns_captions(mock_api, source):
+def test_fetch_transcript_returns_timestamped_captions(mock_api, source):
     mock_api.get_transcript.return_value = [
         {"text": "Hello", "start": 0.0, "duration": 1.0},
-        {"text": "world", "start": 1.0, "duration": 1.0},
+        {"text": "world", "start": 65.0, "duration": 1.0},
     ]
     result = source.fetch_transcript("https://youtube.com/watch?v=abc123def78")
-    assert result == "Hello\nworld"
+    assert result == "[0:00] Hello\n[1:05] world"
     mock_api.get_transcript.assert_called_once_with("abc123def78")
 
 
@@ -572,6 +572,13 @@ import yt_dlp
 from youtube_transcript_api import YouTubeTranscriptApi
 
 
+def _format_ts(seconds: float) -> str:
+    total = int(seconds)
+    m, s = divmod(total, 60)
+    h, m = divmod(m, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
 class YouTubeSource:
     _VIDEO_ID_PATTERN = re.compile(
         r"(?:[?&]v=|youtu\.be/|/shorts/|/embed/)([a-zA-Z0-9_-]{11})"
@@ -587,7 +594,10 @@ class YouTubeSource:
         video_id = self.extract_id(url)
         try:
             entries = YouTubeTranscriptApi.get_transcript(video_id)
-            return "\n".join(entry["text"] for entry in entries)
+            return "\n".join(
+                f"[{_format_ts(entry['start'])}] {entry['text']}"
+                for entry in entries
+            )
         except Exception:
             return None
 
@@ -613,7 +623,7 @@ Expected: All 11 tests PASS
 
 ```bash
 git add src/ask_video/sources/youtube.py tests/test_sources_youtube.py
-git commit -m "feat: add YouTubeSource with broad URL parsing and caption fetching"
+git commit -m "feat: add YouTubeSource with timestamped captions and broad URL parsing"
 ```
 
 ---
@@ -628,6 +638,7 @@ git commit -m "feat: add YouTubeSource with broad URL parsing and caption fetchi
 
 `tests/test_transcribers_whisper.py`:
 ```python
+import shutil
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -636,22 +647,28 @@ import pytest
 from ask_video.transcribers.whisper import WhisperTranscriber
 
 
-def test_transcribe_returns_text(tmp_path):
+def test_transcribe_returns_timestamped_text(tmp_path):
     audio_file = tmp_path / "audio.m4a"
     audio_file.write_bytes(b"fake audio data")
 
     mock_whisper = MagicMock()
     mock_model = MagicMock()
     mock_whisper.load_model.return_value = mock_model
-    mock_model.transcribe.return_value = {"text": "This is the transcribed text."}
+    mock_model.transcribe.return_value = {
+        "text": "Hello world",
+        "segments": [
+            {"start": 0.0, "end": 2.0, "text": " Hello"},
+            {"start": 65.0, "end": 67.0, "text": " world"},
+        ],
+    }
 
     with patch.dict("sys.modules", {"whisper": mock_whisper}):
-        transcriber = WhisperTranscriber(model_name="base")
-        result = transcriber.transcribe(audio_file)
+        with patch("shutil.which", return_value="/usr/bin/ffmpeg"):
+            transcriber = WhisperTranscriber(model_name="base")
+            result = transcriber.transcribe(audio_file)
 
-    assert result == "This is the transcribed text."
+    assert result == "[0:00] Hello\n[1:05] world"
     mock_whisper.load_model.assert_called_once_with("base")
-    mock_model.transcribe.assert_called_once_with(str(audio_file))
 
 
 def test_transcribe_default_model():
@@ -664,8 +681,19 @@ def test_transcribe_raises_when_whisper_not_installed(tmp_path):
     audio_file.write_bytes(b"fake audio data")
 
     with patch.dict("sys.modules", {"whisper": None}):
+        with patch("shutil.which", return_value="/usr/bin/ffmpeg"):
+            transcriber = WhisperTranscriber()
+            with pytest.raises(RuntimeError, match="pip install"):
+                transcriber.transcribe(audio_file)
+
+
+def test_transcribe_raises_when_ffmpeg_missing(tmp_path):
+    audio_file = tmp_path / "audio.m4a"
+    audio_file.write_bytes(b"fake audio data")
+
+    with patch("shutil.which", return_value=None):
         transcriber = WhisperTranscriber()
-        with pytest.raises(RuntimeError, match="pip install"):
+        with pytest.raises(RuntimeError, match="ffmpeg"):
             transcriber.transcribe(audio_file)
 ```
 
@@ -676,11 +704,19 @@ Expected: FAIL with `ModuleNotFoundError`
 
 **Step 3: Write minimal implementation**
 
-Note: `import whisper` is deferred to `_get_model()` so the module can be imported without whisper installed.
+Note: Both `import whisper` and `ffmpeg` availability are checked lazily at transcription time, not at import time.
 
 `src/ask_video/transcribers/whisper.py`:
 ```python
+import shutil
 from pathlib import Path
+
+
+def _format_ts(seconds: float) -> str:
+    total = int(seconds)
+    m, s = divmod(total, 60)
+    h, m = divmod(m, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
 
 class WhisperTranscriber:
@@ -700,21 +736,29 @@ class WhisperTranscriber:
         return self._model
 
     def transcribe(self, audio_path: Path) -> str:
+        if not shutil.which("ffmpeg"):
+            raise RuntimeError(
+                "ffmpeg is required for audio transcription but was not found. "
+                "Install it: https://ffmpeg.org/download.html"
+            )
         model = self._get_model()
         result = model.transcribe(str(audio_path))
-        return result["text"]
+        return "\n".join(
+            f"[{_format_ts(seg['start'])}]{seg['text']}"
+            for seg in result["segments"]
+        )
 ```
 
 **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_transcribers_whisper.py -v`
-Expected: All 3 tests PASS
+Expected: All 4 tests PASS
 
 **Step 5: Commit**
 
 ```bash
 git add src/ask_video/transcribers/whisper.py tests/test_transcribers_whisper.py
-git commit -m "feat: add WhisperTranscriber with deferred import and helpful error"
+git commit -m "feat: add WhisperTranscriber with timestamps, ffmpeg check, and deferred import"
 ```
 
 ---
@@ -1200,7 +1244,7 @@ def test_full_pipeline_with_captions(mock_yt_api, mock_genai, tmp_path):
 
     transcript = store.save(video_id=video_id, url=url, text=text, source="youtube_captions")
     assert transcript.id == video_id
-    assert transcript.text == "Welcome to the tutorial\nToday we learn Python"
+    assert transcript.text == "[0:00] Welcome to the tutorial\n[0:02] Today we learn Python"
 
     engine = GeminiEngine(api_key="test-key")
     answer = engine.ask(transcript.text, "What is this video about?", history=[])

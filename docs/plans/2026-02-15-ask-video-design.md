@@ -50,7 +50,8 @@ class VideoSource(Protocol):
         ...
 
     def fetch_transcript(self, url: str) -> str | None:
-        """Try to get an existing transcript (e.g. YouTube captions). Returns None if unavailable."""
+        """Try to get an existing transcript with timestamps (e.g. YouTube captions).
+        Returns timestamped text in [MM:SS] format, or None if unavailable."""
         ...
 
     def download_audio(self, url: str, output_dir: Path) -> Path:
@@ -59,7 +60,7 @@ class VideoSource(Protocol):
 
 class Transcriber(Protocol):
     def transcribe(self, audio_path: Path) -> str:
-        """Transcribe an audio file to text."""
+        """Transcribe an audio file to timestamped text in [MM:SS] format."""
         ...
 
 class QAEngine(Protocol):
@@ -90,7 +91,7 @@ class Store(Protocol):
 class Transcript:
     id: str                    # Video identifier (e.g. YouTube video ID)
     url: str                   # Source YouTube URL
-    text: str                  # The transcription content
+    text: str                  # Timestamped transcription (e.g. "[0:00] Hello\n[0:05] World")
     created_at: datetime       # When the transcript was created
     source: str                # "youtube_captions" | "whisper"
     path: Path                 # Path to the transcript directory on disk
@@ -160,7 +161,8 @@ class Session:
 | Scenario | Behavior |
 |---|---|
 | Invalid/unreachable YouTube URL | Clear error message, exit |
-| No captions + Whisper not installed | Error suggesting install |
+| No captions + Whisper not installed | Error suggesting `pip install 'ask-video[whisper]'` |
+| ffmpeg not found on system | Error explaining ffmpeg is required for audio transcription |
 | Gemini API key missing | Error with env var instructions |
 | Gemini rate limit / API error | Retry once, then show error, stay in REPL |
 | Network failure during transcription | Save partial progress, suggest retry |
