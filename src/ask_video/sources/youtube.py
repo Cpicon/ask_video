@@ -58,7 +58,7 @@ class YouTubeSource:
                     )
             return ""
         except Exception as e:
-            print(f"DEBUG: fetch_transcript failed: {e} Type: {type(e)}")
+            print(f"CONFIG: fetch_transcript failed: {e} Type: {type(e)}")
             return None
 
     def download_audio(self, url: VideoURL, output_dir: Path) -> Path:

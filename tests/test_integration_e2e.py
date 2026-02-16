@@ -38,10 +38,9 @@ def test_e2e_live_flow(store):
         # Use gemini-3-pro-preview as requested
         result = runner.invoke(app, [video_url, "--model", "gemini-3-pro-preview"], input=user_input, env=env)
         
-        print(f"Full Output:\n{result.output}")
-        
         # Debugging output if test fails
         if result.exit_code != 0:
+            print(f"Full Output:\n{result.output}")
             print(f"Exception: {result.exception}")
         
         assert result.exit_code == 0

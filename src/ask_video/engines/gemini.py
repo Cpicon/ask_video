@@ -14,11 +14,11 @@ class GeminiEngine:
     ):
         self.model = model
         if api_key:
-            print(f"DEBUG: Initializing GeminiEngine with API Key (AI Studio). Model: {model}")
+            print(f"CONFIG: Initializing GeminiEngine with API Key (AI Studio). Model: {model}")
             # Use Gemini Developer API (AI Studio)
             self._client = genai.Client(api_key=api_key, vertexai=False)
         else:
-            print(f"DEBUG: Initializing GeminiEngine with Vertex AI (ADC). Project: {project}, Location: {location}, Model: {model}")
+            print(f"CONFIG: Initializing GeminiEngine with Vertex AI (ADC). Project: {project}, Location: {location}, Model: {model}")
             # Use Vertex AI (relies on ADC / environment variables)
             self._client = genai.Client(vertexai=True, project=project, location=location)
 
