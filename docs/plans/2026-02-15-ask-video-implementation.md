@@ -95,7 +95,7 @@ git commit -m "chore: scaffold project structure with pyproject.toml"
 
 ---
 
-### Task 2: Data Models
+### Task 2: Data Models & Domain Types
 
 **Files:**
 - Create: `src/ask_video/models.py`
@@ -108,40 +108,59 @@ git commit -m "chore: scaffold project structure with pyproject.toml"
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ask_video.models import Transcript, Session
+from ask_video.models import (
+    Transcript, Session, VideoURL, VideoID, TranscriptHash,
+    generate_transcript_hash,
+)
 
 
 def test_transcript_creation():
     t = Transcript(
-        id="abc123",
-        url="https://youtube.com/watch?v=xyz",
+        id=TranscriptHash("a1b2c3d4e5f6g7h8"),
+        video_id=VideoID("dQw4w9WgXcQ"),
+        url=VideoURL("https://youtube.com/watch?v=dQw4w9WgXcQ"),
         text="Hello world",
         created_at=datetime(2026, 2, 15, tzinfo=timezone.utc),
         source="youtube_captions",
-        path=Path(".ask_video/transcripts/abc123"),
+        path=Path(".ask_video/transcripts/a1b2c3d4e5f6g7h8"),
     )
-    assert t.id == "abc123"
-    assert t.url == "https://youtube.com/watch?v=xyz"
+    assert t.id == "a1b2c3d4e5f6g7h8"
+    assert t.video_id == "dQw4w9WgXcQ"
+    assert t.url == "https://youtube.com/watch?v=dQw4w9WgXcQ"
     assert t.text == "Hello world"
     assert t.source == "youtube_captions"
+
+
+def test_generate_transcript_hash_is_deterministic():
+    vid = VideoID("dQw4w9WgXcQ")
+    h1 = generate_transcript_hash(vid)
+    h2 = generate_transcript_hash(vid)
+    assert h1 == h2
+    assert len(h1) == 16  # 16 hex chars
+
+
+def test_generate_transcript_hash_differs_for_different_ids():
+    h1 = generate_transcript_hash(VideoID("aaaaaaaaaaa"))
+    h2 = generate_transcript_hash(VideoID("bbbbbbbbbbb"))
+    assert h1 != h2
 
 
 def test_session_creation():
     s = Session(
         id="sess001",
-        transcript_id="abc123",
+        transcript_id=TranscriptHash("a1b2c3d4e5f6g7h8"),
         started_at=datetime(2026, 2, 15, 10, 30, tzinfo=timezone.utc),
         messages=[],
     )
     assert s.id == "sess001"
-    assert s.transcript_id == "abc123"
+    assert s.transcript_id == "a1b2c3d4e5f6g7h8"
     assert s.messages == []
 
 
 def test_session_add_messages():
     s = Session(
         id="sess001",
-        transcript_id="abc123",
+        transcript_id=TranscriptHash("a1b2c3d4e5f6g7h8"),
         started_at=datetime(2026, 2, 15, 10, 30, tzinfo=timezone.utc),
         messages=[],
     )
@@ -161,15 +180,30 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'ask_video.models'`
 
 `src/ask_video/models.py`:
 ```python
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import NewType
+
+# --- Domain Types ---
+VideoURL = NewType("VideoURL", str)
+VideoID = NewType("VideoID", str)
+TranscriptHash = NewType("TranscriptHash", str)
 
 
+def generate_transcript_hash(video_id: VideoID) -> TranscriptHash:
+    """Generate a stable, filesystem-friendly hash from a canonical Video ID."""
+    hashed = hashlib.sha256(video_id.encode("utf-8")).hexdigest()[:16]
+    return TranscriptHash(hashed)
+
+
+# --- Entities ---
 @dataclass
 class Transcript:
-    id: str
-    url: str
+    id: TranscriptHash
+    video_id: VideoID
+    url: VideoURL
     text: str
     created_at: datetime
     source: str  # "youtube_captions" | "whisper"
@@ -179,7 +213,7 @@ class Transcript:
 @dataclass
 class Session:
     id: str
-    transcript_id: str
+    transcript_id: TranscriptHash
     started_at: datetime
     messages: list[dict] = field(default_factory=list)
 ```
@@ -187,13 +221,13 @@ class Session:
 **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_models.py -v`
-Expected: All 3 tests PASS
+Expected: All 5 tests PASS
 
 **Step 5: Commit**
 
 ```bash
 git add src/ask_video/models.py tests/test_models.py
-git commit -m "feat: add Transcript and Session data models"
+git commit -m "feat: add domain types (VideoURL, VideoID, TranscriptHash) and data models"
 ```
 
 ---
@@ -210,19 +244,21 @@ git commit -m "feat: add Transcript and Session data models"
 from pathlib import Path
 from typing import Protocol
 
-from ask_video.models import Transcript, Session
+from ask_video.models import (
+    Transcript, Session, VideoURL, VideoID, TranscriptHash,
+)
 
 
 class VideoSource(Protocol):
-    def extract_id(self, url: str) -> str:
+    def extract_id(self, url: VideoURL) -> VideoID:
         """Extract a canonical video identifier from a URL."""
         ...
 
-    def fetch_transcript(self, url: str) -> str | None:
+    def fetch_transcript(self, url: VideoURL) -> str | None:
         """Try to get an existing transcript with timestamps. Returns None if unavailable."""
         ...
 
-    def download_audio(self, url: str, output_dir: Path) -> Path:
+    def download_audio(self, url: VideoURL, output_dir: Path) -> Path:
         """Download audio from the video URL. Returns path to audio file."""
         ...
 
@@ -240,12 +276,12 @@ class QAEngine(Protocol):
 
 
 class Store(Protocol):
-    def lookup(self, video_id: str) -> Transcript | None:
-        """Look up a cached transcript by video ID. Returns None if not found."""
+    def lookup(self, transcript_hash: TranscriptHash) -> Transcript | None:
+        """Look up a cached transcript by its hashed ID. Returns None if not found."""
         ...
 
-    def save(self, video_id: str, url: str, text: str, source: str) -> Transcript:
-        """Save a transcript to disk, keyed by video ID."""
+    def save(self, transcript_hash: TranscriptHash, video_id: VideoID, url: VideoURL, text: str, source: str) -> Transcript:
+        """Save a transcript to disk, keyed by the hashed ID."""
         ...
 
     def save_session(self, session: Session) -> Path:
@@ -282,7 +318,10 @@ from pathlib import Path
 import pytest
 
 from ask_video.store import TranscriptStore
-from ask_video.models import Transcript, Session
+from ask_video.models import (
+    Transcript, Session, VideoURL, VideoID, TranscriptHash,
+    generate_transcript_hash,
+)
 
 
 @pytest.fixture
@@ -292,51 +331,60 @@ def store(tmp_path: Path) -> TranscriptStore:
 
 def test_store_initializes_directory(store: TranscriptStore):
     assert store.base_dir.exists()
-    assert (store.base_dir / "metadata.json").exists()
 
 
-def test_lookup_returns_none_for_unknown_id(store: TranscriptStore):
-    assert store.lookup("unknown_id") is None
+def test_lookup_returns_none_for_unknown_hash(store: TranscriptStore):
+    assert store.lookup(TranscriptHash("0000000000000000")) is None
 
 
 def test_save_and_lookup_transcript(store: TranscriptStore):
+    video_id = VideoID("dQw4w9WgXcQ")
+    t_hash = generate_transcript_hash(video_id)
+
     transcript = store.save(
-        video_id="dQw4w9WgXcQ",
-        url="https://youtube.com/watch?v=dQw4w9WgXcQ",
+        transcript_hash=t_hash,
+        video_id=video_id,
+        url=VideoURL("https://youtube.com/watch?v=dQw4w9WgXcQ"),
         text="Hello world transcript",
         source="youtube_captions",
     )
-    assert transcript.id == "dQw4w9WgXcQ"
-    assert transcript.url == "https://youtube.com/watch?v=dQw4w9WgXcQ"
+    assert transcript.id == t_hash
+    assert transcript.video_id == "dQw4w9WgXcQ"
     assert transcript.text == "Hello world transcript"
-    assert transcript.source == "youtube_captions"
     assert transcript.path.exists()
 
-    # Lookup by video_id should find it
-    loaded = store.lookup("dQw4w9WgXcQ")
+    # Lookup by hash should find it
+    loaded = store.lookup(t_hash)
     assert loaded is not None
     assert loaded.id == transcript.id
+    assert loaded.video_id == "dQw4w9WgXcQ"
     assert loaded.text == "Hello world transcript"
 
 
-def test_lookup_returns_none_when_transcript_dir_missing(store: TranscriptStore):
-    """If metadata references a transcript but the directory was deleted, return None."""
+def test_lookup_returns_none_when_transcript_dir_deleted(store: TranscriptStore):
+    video_id = VideoID("abc123def78")
+    t_hash = generate_transcript_hash(video_id)
+
     transcript = store.save(
-        video_id="abc123def78",
-        url="https://youtube.com/watch?v=abc123def78",
+        transcript_hash=t_hash,
+        video_id=video_id,
+        url=VideoURL("https://youtube.com/watch?v=abc123def78"),
         text="Some text",
         source="youtube_captions",
     )
-    # Simulate user deleting the transcript directory
     shutil.rmtree(transcript.path)
 
-    assert store.lookup("abc123def78") is None
+    assert store.lookup(t_hash) is None
 
 
 def test_save_session(store: TranscriptStore):
+    video_id = VideoID("dQw4w9WgXcQ")
+    t_hash = generate_transcript_hash(video_id)
+
     transcript = store.save(
-        video_id="dQw4w9WgXcQ",
-        url="https://youtube.com/watch?v=dQw4w9WgXcQ",
+        transcript_hash=t_hash,
+        video_id=video_id,
+        url=VideoURL("https://youtube.com/watch?v=dQw4w9WgXcQ"),
         text="Hello world",
         source="youtube_captions",
     )
@@ -368,50 +416,49 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'ask_video.store'`
 
 **Step 3: Write minimal implementation**
 
+Note: No `metadata.json` needed. `TranscriptHash` is deterministic, so lookup simply checks if the directory exists. This eliminates race conditions and cache corruption entirely.
+
 `src/ask_video/store.py`:
 ```python
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ask_video.models import Transcript, Session
+from ask_video.models import (
+    Transcript, Session, VideoURL, VideoID, TranscriptHash,
+)
 
 
 class TranscriptStore:
     def __init__(self, base_dir: Path | None = None):
         self.base_dir = base_dir or Path(".ask_video")
         self.base_dir.mkdir(parents=True, exist_ok=True)
-        self._metadata_path = self.base_dir / "metadata.json"
-        if not self._metadata_path.exists():
-            self._metadata_path.write_text("{}")
 
-    def _read_metadata(self) -> dict:
-        return json.loads(self._metadata_path.read_text())
-
-    def _write_metadata(self, data: dict) -> None:
-        self._metadata_path.write_text(json.dumps(data, indent=2))
-
-    def lookup(self, video_id: str) -> Transcript | None:
-        metadata = self._read_metadata()
-        if video_id not in metadata:
-            return None
-        entry = metadata[video_id]
-        transcript_dir = self.base_dir / "transcripts" / video_id
+    def lookup(self, transcript_hash: TranscriptHash) -> Transcript | None:
+        transcript_dir = self.base_dir / "transcripts" / transcript_hash
         if not transcript_dir.exists():
             return None
         text = (transcript_dir / "transcript.txt").read_text()
         info = json.loads((transcript_dir / "info.json").read_text())
         return Transcript(
-            id=video_id,
-            url=entry["url"],
+            id=transcript_hash,
+            video_id=VideoID(info["video_id"]),
+            url=VideoURL(info["url"]),
             text=text,
             created_at=datetime.fromisoformat(info["created_at"]),
             source=info["source"],
             path=transcript_dir,
         )
 
-    def save(self, video_id: str, url: str, text: str, source: str) -> Transcript:
-        transcript_dir = self.base_dir / "transcripts" / video_id
+    def save(
+        self,
+        transcript_hash: TranscriptHash,
+        video_id: VideoID,
+        url: VideoURL,
+        text: str,
+        source: str,
+    ) -> Transcript:
+        transcript_dir = self.base_dir / "transcripts" / transcript_hash
         transcript_dir.mkdir(parents=True, exist_ok=True)
 
         now = datetime.now(timezone.utc)
@@ -419,18 +466,16 @@ class TranscriptStore:
         (transcript_dir / "transcript.txt").write_text(text)
         (transcript_dir / "info.json").write_text(
             json.dumps({
+                "video_id": video_id,
                 "url": url,
                 "created_at": now.isoformat(),
                 "source": source,
             }, indent=2)
         )
 
-        metadata = self._read_metadata()
-        metadata[video_id] = {"url": url}
-        self._write_metadata(metadata)
-
         return Transcript(
-            id=video_id,
+            id=transcript_hash,
+            video_id=video_id,
             url=url,
             text=text,
             created_at=now,
@@ -466,7 +511,7 @@ Expected: All 5 tests PASS
 
 ```bash
 git add src/ask_video/store.py tests/test_store.py
-git commit -m "feat: add TranscriptStore with video_id cache key and defensive lookup"
+git commit -m "feat: add TranscriptStore with hash-based lookup, no index file"
 ```
 
 ---
@@ -571,6 +616,8 @@ from pathlib import Path
 import yt_dlp
 from youtube_transcript_api import YouTubeTranscriptApi
 
+from ask_video.models import VideoURL, VideoID
+
 
 def _format_ts(seconds: float) -> str:
     total = int(seconds)
@@ -584,13 +631,13 @@ class YouTubeSource:
         r"(?:[?&]v=|youtu\.be/|/shorts/|/embed/)([a-zA-Z0-9_-]{11})"
     )
 
-    def extract_id(self, url: str) -> str:
+    def extract_id(self, url: VideoURL) -> VideoID:
         match = self._VIDEO_ID_PATTERN.search(url)
         if match:
-            return match.group(1)
+            return VideoID(match.group(1))
         raise ValueError(f"Could not extract video ID from URL: {url}")
 
-    def fetch_transcript(self, url: str) -> str | None:
+    def fetch_transcript(self, url: VideoURL) -> str | None:
         video_id = self.extract_id(url)
         try:
             entries = YouTubeTranscriptApi.get_transcript(video_id)
@@ -601,7 +648,7 @@ class YouTubeSource:
         except Exception:
             return None
 
-    def download_audio(self, url: str, output_dir: Path) -> Path:
+    def download_audio(self, url: VideoURL, output_dir: Path) -> Path:
         opts = {
             "format": "bestaudio/best",
             "outtmpl": str(output_dir / "%(id)s.%(ext)s"),
@@ -1015,6 +1062,7 @@ import pytest
 from typer.testing import CliRunner
 
 from ask_video.cli import app
+from ask_video.models import VideoID, generate_transcript_hash
 
 
 runner = CliRunner()
@@ -1037,16 +1085,16 @@ def test_cli_loads_cached_transcript(mock_store_cls, mock_source_fn, mock_engine
     mock_store_cls.return_value = mock_store
     mock_source = MagicMock()
     mock_source_fn.return_value = mock_source
-    mock_source.extract_id.return_value = "dQw4w9WgXcQ"
+    mock_source.extract_id.return_value = VideoID("dQw4w9WgXcQ")
+    expected_hash = generate_transcript_hash(VideoID("dQw4w9WgXcQ"))
     mock_transcript = MagicMock()
     mock_transcript.text = "cached text"
-    mock_transcript.id = "dQw4w9WgXcQ"
+    mock_transcript.id = expected_hash
     mock_store.lookup.return_value = mock_transcript
 
     result = runner.invoke(app, ["https://youtube.com/watch?v=dQw4w9WgXcQ"])
     assert result.exit_code == 0
-    mock_source.extract_id.assert_called_once_with("https://youtube.com/watch?v=dQw4w9WgXcQ")
-    mock_store.lookup.assert_called_once_with("dQw4w9WgXcQ")
+    mock_store.lookup.assert_called_once_with(expected_hash)
     mock_run.assert_called_once()
 
 
@@ -1081,7 +1129,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from ask_video.factory import create_source, create_transcriber, create_engine
-from ask_video.models import Session
+from ask_video.models import VideoURL, Session, generate_transcript_hash
 from ask_video.store import TranscriptStore
 
 app = typer.Typer(help="Ask questions about YouTube videos using AI.")
@@ -1130,7 +1178,7 @@ def run_session(transcript_text: str, engine, store: TranscriptStore, transcript
 
 @app.command()
 def main(
-    url: str = typer.Argument(help="YouTube video URL"),
+    url_input: str = typer.Argument(help="YouTube video URL"),
     transcriber_name: str = typer.Option("whisper", "--transcriber", "-t", help="Transcriber to use"),
     model: str = typer.Option("gemini-2.0-flash", "--model", "-m", help="LLM model name"),
 ):
@@ -1143,15 +1191,21 @@ def main(
     store = TranscriptStore()
     source = create_source("youtube")
 
-    # Extract video ID early — validates URL and provides cache key
+    # 1. Cast input string to domain type
+    url = VideoURL(url_input)
+
+    # 2. Extract canonical video ID (validates URL)
     try:
         video_id = source.extract_id(url)
     except ValueError as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(code=1)
 
-    # Check cache first
-    transcript = store.lookup(video_id)
+    # 3. Compute deterministic hash for storage lookup
+    transcript_hash = generate_transcript_hash(video_id)
+
+    # 4. Check cache using the hash
+    transcript = store.lookup(transcript_hash)
     if transcript:
         console.print("[dim]Loaded cached transcript.[/dim]")
     else:
@@ -1160,7 +1214,13 @@ def main(
 
         if text:
             console.print("[dim]Found YouTube captions.[/dim]")
-            transcript = store.save(video_id=video_id, url=url, text=text, source="youtube_captions")
+            transcript = store.save(
+                transcript_hash=transcript_hash,
+                video_id=video_id,
+                url=url,
+                text=text,
+                source="youtube_captions",
+            )
         else:
             console.print("[dim]No captions found. Downloading audio for transcription...[/dim]")
             transcriber = create_transcriber(transcriber_name)
@@ -1168,7 +1228,13 @@ def main(
             try:
                 console.print(f"[dim]Transcribing with {transcriber_name}...[/dim]")
                 text = transcriber.transcribe(audio_path)
-                transcript = store.save(video_id=video_id, url=url, text=text, source=transcriber_name)
+                transcript = store.save(
+                    transcript_hash=transcript_hash,
+                    video_id=video_id,
+                    url=url,
+                    text=text,
+                    source=transcriber_name,
+                )
             finally:
                 audio_path.unlink(missing_ok=True)
 
@@ -1213,6 +1279,7 @@ import pytest
 from ask_video.store import TranscriptStore
 from ask_video.sources.youtube import YouTubeSource
 from ask_video.engines.gemini import GeminiEngine
+from ask_video.models import VideoURL, generate_transcript_hash
 
 
 @patch("ask_video.engines.gemini.genai")
@@ -1235,31 +1302,41 @@ def test_full_pipeline_with_captions(mock_yt_api, mock_genai, tmp_path):
     source = YouTubeSource()
     store = TranscriptStore(base_dir=tmp_path / ".ask_video")
 
-    url = "https://youtube.com/watch?v=test123test1"
+    url = VideoURL("https://youtube.com/watch?v=test123test1")
     video_id = source.extract_id(url)
     assert video_id == "test123test1"
+
+    transcript_hash = generate_transcript_hash(video_id)
 
     text = source.fetch_transcript(url)
     assert text is not None
 
-    transcript = store.save(video_id=video_id, url=url, text=text, source="youtube_captions")
-    assert transcript.id == video_id
+    transcript = store.save(
+        transcript_hash=transcript_hash,
+        video_id=video_id,
+        url=url,
+        text=text,
+        source="youtube_captions",
+    )
+    assert transcript.id == transcript_hash
+    assert transcript.video_id == "test123test1"
     assert transcript.text == "[0:00] Welcome to the tutorial\n[0:02] Today we learn Python"
 
     engine = GeminiEngine(api_key="test-key")
     answer = engine.ask(transcript.text, "What is this video about?", history=[])
     assert answer == "The video is a Python tutorial."
 
-    # Verify transcript is cached by video_id
-    cached = store.lookup(video_id)
+    # Verify transcript is cached by hash
+    cached = store.lookup(transcript_hash)
     assert cached is not None
     assert cached.id == transcript.id
 
-    # Verify that a different URL for the same video hits the cache
-    alt_url = "https://youtu.be/test123test1"
+    # Verify that a different URL for the same video produces the same hash
+    alt_url = VideoURL("https://youtu.be/test123test1")
     alt_video_id = source.extract_id(alt_url)
-    assert alt_video_id == video_id
-    cached_again = store.lookup(alt_video_id)
+    alt_hash = generate_transcript_hash(alt_video_id)
+    assert alt_hash == transcript_hash  # Same video → same hash
+    cached_again = store.lookup(alt_hash)
     assert cached_again is not None
     assert cached_again.id == transcript.id
 ```

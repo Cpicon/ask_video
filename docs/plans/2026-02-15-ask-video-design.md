@@ -41,20 +41,34 @@ ask_video/
 └── .ask_video/                 # Created at runtime in CWD (not checked in)
 ```
 
+## Domain Types
+
+To prevent Primitive Obsession (passing raw strings where semantically different identifiers are expected), the application defines strict types using `NewType`. These are zero-cost at runtime but enable `mypy` to catch misuse at type-check time.
+
+```python
+from typing import NewType
+
+VideoURL = NewType("VideoURL", str)             # e.g., "https://youtube.com/watch?v=xyz"
+VideoID = NewType("VideoID", str)               # Canonical ID from the source (e.g., "xyz")
+TranscriptHash = NewType("TranscriptHash", str) # SHA-256 hash of VideoID, used as storage key
+```
+
+`TranscriptHash` is deterministically derived from `VideoID` via `generate_transcript_hash()`. This decouples storage from provider-specific ID formats (no special characters in directory names) and eliminates the need for a lookup index file.
+
 ## Core Protocols
 
 ```python
 class VideoSource(Protocol):
-    def extract_id(self, url: str) -> str:
+    def extract_id(self, url: VideoURL) -> VideoID:
         """Extract a canonical video identifier from a URL (e.g. YouTube video ID)."""
         ...
 
-    def fetch_transcript(self, url: str) -> str | None:
+    def fetch_transcript(self, url: VideoURL) -> str | None:
         """Try to get an existing transcript with timestamps (e.g. YouTube captions).
         Returns timestamped text in [MM:SS] format, or None if unavailable."""
         ...
 
-    def download_audio(self, url: str, output_dir: Path) -> Path:
+    def download_audio(self, url: VideoURL, output_dir: Path) -> Path:
         """Download audio from the video URL. Returns path to audio file."""
         ...
 
@@ -69,12 +83,12 @@ class QAEngine(Protocol):
         ...
 
 class Store(Protocol):
-    def lookup(self, video_id: str) -> Transcript | None:
-        """Look up a cached transcript by video ID. Returns None if not found."""
+    def lookup(self, transcript_hash: TranscriptHash) -> Transcript | None:
+        """Look up a cached transcript by its hashed ID. Returns None if not found."""
         ...
 
-    def save(self, video_id: str, url: str, text: str, source: str) -> Transcript:
-        """Save a transcript to disk, keyed by video ID."""
+    def save(self, transcript_hash: TranscriptHash, video_id: VideoID, url: VideoURL, text: str, source: str) -> Transcript:
+        """Save a transcript to disk, keyed by the hashed ID."""
         ...
 
     def save_session(self, session: Session) -> Path:
@@ -89,8 +103,9 @@ class Store(Protocol):
 ```python
 @dataclass
 class Transcript:
-    id: str                    # Video identifier (e.g. YouTube video ID)
-    url: str                   # Source YouTube URL
+    id: TranscriptHash         # Hashed identifier used by the store
+    video_id: VideoID          # Canonical ID from the source (e.g. YouTube video ID)
+    url: VideoURL              # Source video URL
     text: str                  # Timestamped transcription (e.g. "[0:00] Hello\n[0:05] World")
     created_at: datetime       # When the transcript was created
     source: str                # "youtube_captions" | "whisper"
@@ -103,20 +118,21 @@ class Transcript:
 @dataclass
 class Session:
     id: str                    # Short UUID
-    transcript_id: str         # Links to Transcript
+    transcript_id: TranscriptHash  # Links to Transcript via hashed ID
     started_at: datetime       # Session start timestamp
     messages: list[dict]       # [{"role": "user"|"assistant", "content": "..."}]
 ```
 
 ## Storage Layout
 
+No index file is needed. `TranscriptHash` is deterministically computed from `VideoID`, so the CLI knows exactly which directory to check.
+
 ```
 .ask_video/
-├── metadata.json                             # video_id → {url} index
 └── transcripts/
-    └── <transcript_id>/
+    └── <transcript_hash>/
         ├── transcript.txt                    # The transcription text
-        ├── info.json                         # URL, created_at, source
+        ├── info.json                         # video_id, url, created_at, source
         └── sessions/
             └── 2026-02-15_<short_uuid>.json  # Conversation history
 ```
@@ -124,19 +140,21 @@ class Session:
 ## Data Flow
 
 1. User runs: `ask_video https://youtube.com/watch?v=xyz`
-2. `VideoSource.extract_id(url)` extracts canonical video ID (validates URL)
-3. `TranscriptStore.lookup(video_id)` checks cache
-4. If cached: load transcript from disk
-5. If not cached:
+2. CLI casts input to `VideoURL`
+3. `VideoSource.extract_id(url)` extracts canonical `VideoID` (validates URL)
+4. CLI computes `TranscriptHash` via `generate_transcript_hash(video_id)`
+5. `Store.lookup(transcript_hash)` checks if directory exists
+6. If cached: load transcript from disk
+7. If not cached:
    a. `VideoSource.fetch_transcript(url)` — try YouTube captions first
    b. If no captions: `VideoSource.download_audio()` + `Transcriber.transcribe()`
-   c. `TranscriptStore.save(video_id, url, text, source)` — cache to disk
-6. Enter REPL loop:
+   c. `Store.save(transcript_hash, video_id, url, text, source)` — cache to disk
+8. Enter REPL loop:
    - User types question
    - `QAEngine.ask(transcript, question, history)` returns answer
    - Display answer, append to session history
    - Repeat until user exits (Ctrl+C or "exit")
-7. On exit: save session to `sessions/<date>_<session_id>.json`
+9. On exit: save session to `sessions/<date>_<session_id>.json`
 
 ## Dependencies
 
