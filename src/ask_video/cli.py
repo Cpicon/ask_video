@@ -59,9 +59,10 @@ def main(
     url_input: str = typer.Argument(help="YouTube video URL"),
     transcriber_name: str = typer.Option("whisper", "--transcriber", "-t", help="Transcriber to use"),
     model: str = typer.Option("gemini-3-pro-preview", "--model", "-m", help="LLM model name"),
+    vertex: bool = typer.Option(False, "--vertex", help="Force Vertex AI with ADC instead of AI Studio"),
 ):
     """Load a YouTube video and ask questions about it."""
-    api_key = os.environ.get("GEMINI_API_KEY")
+    api_key = None if vertex else os.environ.get("GEMINI_API_KEY")
     project = os.environ.get("GOOGLE_CLOUD_PROJECT")
     location = os.environ.get("GOOGLE_CLOUD_LOCATION")
 
