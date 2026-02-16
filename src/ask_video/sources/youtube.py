@@ -28,12 +28,37 @@ class YouTubeSource:
     def fetch_transcript(self, url: VideoURL) -> str | None:
         video_id = self.extract_id(url)
         try:
-            entries = YouTubeTranscriptApi.get_transcript(video_id)
-            return "\n".join(
-                f"[{_format_ts(entry['start'])}] {entry['text']}"
-                for entry in entries
-            )
-        except Exception:
+            api = YouTubeTranscriptApi()
+            transcript_list = api.list(video_id)
+            # Try to get manual English, then generated English, then any English
+            try:
+                transcript = transcript_list.find_manually_created_transcript(["en"])
+            except Exception:
+                try:
+                    transcript = transcript_list.find_generated_transcript(["en"])
+                except Exception:
+                    # Fallback to whatever is available (e.g. translated) or just the first one
+                    transcript = next(iter(transcript_list))
+            
+            entries = transcript.fetch()
+            # Inspect first entry type for debugging
+            if entries:
+                first = entries[0]
+                # If it's a dict
+                if isinstance(first, dict):
+                    return "\n".join(
+                        f"[{_format_ts(entry['start'])}] {entry['text']}"
+                        for entry in entries
+                    )
+                # If it's an object
+                else:
+                    return "\n".join(
+                        f"[{_format_ts(entry.start)}] {entry.text}"
+                        for entry in entries
+                    )
+            return ""
+        except Exception as e:
+            print(f"DEBUG: fetch_transcript failed: {e} Type: {type(e)}")
             return None
 
     def download_audio(self, url: VideoURL, output_dir: Path) -> Path:

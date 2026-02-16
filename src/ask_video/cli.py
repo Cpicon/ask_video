@@ -61,10 +61,9 @@ def main(
     model: str = typer.Option("gemini-2.0-flash", "--model", "-m", help="LLM model name"),
 ):
     """Load a YouTube video and ask questions about it."""
-    api_key = os.environ.get("GEMINI_API_KEY", "")
-    if not api_key:
-        console.print("[red]Error: GEMINI_API_KEY environment variable is not set.[/red]")
-        raise typer.Exit(code=1)
+    api_key = os.environ.get("GEMINI_API_KEY")
+    project = os.environ.get("GOOGLE_CLOUD_PROJECT")
+    location = os.environ.get("GOOGLE_CLOUD_LOCATION")
 
     store = TranscriptStore()
     source = create_source("youtube")
@@ -116,7 +115,13 @@ def main(
             finally:
                 audio_path.unlink(missing_ok=True)
 
-    engine = create_engine("gemini", api_key=api_key, model=model)
+    engine = create_engine(
+        "gemini", 
+        api_key=api_key, 
+        model=model, 
+        project=project, 
+        location=location
+    )
     run_session(transcript.text, engine, store, transcript.id)
 
 
