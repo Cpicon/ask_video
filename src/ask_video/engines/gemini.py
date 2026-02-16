@@ -36,11 +36,19 @@ class GeminiEngine:
             contents.append({"role": role, "parts": [{"text": msg["content"]}]})
         contents.append({"role": "user", "parts": [{"text": question}]})
 
-        response = self._client.models.generate_content(
+        config = types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            thinking_config=types.ThinkingConfig(thinking_budget=24576),
+        )
+
+        # Stream to prevent timeouts on long responses
+        chunks = []
+        for chunk in self._client.models.generate_content_stream(
             model=self.model,
             contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-            ),
-        )
-        return response.text
+            config=config,
+        ):
+            if chunk.text:
+                chunks.append(chunk.text)
+
+        return "".join(chunks)

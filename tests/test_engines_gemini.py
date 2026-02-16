@@ -6,13 +6,23 @@ import pytest
 from ask_video.engines.gemini import GeminiEngine
 
 
+def _make_stream_chunks(*texts):
+    """Helper: create mock streaming chunks from text strings."""
+    chunks = []
+    for t in texts:
+        chunk = MagicMock()
+        chunk.text = t
+        chunks.append(chunk)
+    return chunks
+
+
 @patch("ask_video.engines.gemini.genai")
-def test_ask_sends_transcript_and_question(mock_genai):
+def test_ask_streams_and_returns_full_response(mock_genai):
     mock_client = MagicMock()
     mock_genai.Client.return_value = mock_client
-    mock_response = MagicMock()
-    mock_response.text = "The video discusses Python programming."
-    mock_client.models.generate_content.return_value = mock_response
+    mock_client.models.generate_content_stream.return_value = _make_stream_chunks(
+        "The video ", "discusses ", "Python programming."
+    )
 
     engine = GeminiEngine(api_key="test-key", model="gemini-3-pro-preview")
     result = engine.ask(
@@ -23,21 +33,28 @@ def test_ask_sends_transcript_and_question(mock_genai):
 
     assert result == "The video discusses Python programming."
 
-    # Verify system_instruction is in config, not in contents
-    call_kwargs = mock_client.models.generate_content.call_args
+    # Verify streaming was used, not non-streaming
+    mock_client.models.generate_content_stream.assert_called_once()
+    mock_client.models.generate_content.assert_not_called()
+
+    # Verify system_instruction and thinking_config are in config
+    call_kwargs = mock_client.models.generate_content_stream.call_args
     contents = call_kwargs.kwargs["contents"]
-    assert len(contents) == 1  # Only the user question, no system prompt in contents
+    assert len(contents) == 1
     assert contents[0]["role"] == "user"
-    assert call_kwargs.kwargs["config"].system_instruction is not None
+    config = call_kwargs.kwargs["config"]
+    assert config.system_instruction is not None
+    assert config.thinking_config is not None
+    assert config.thinking_config.thinking_budget == 24576
 
 
 @patch("ask_video.engines.gemini.genai")
 def test_ask_includes_conversation_history(mock_genai):
     mock_client = MagicMock()
     mock_genai.Client.return_value = mock_client
-    mock_response = MagicMock()
-    mock_response.text = "As I mentioned, it covers decorators."
-    mock_client.models.generate_content.return_value = mock_response
+    mock_client.models.generate_content_stream.return_value = _make_stream_chunks(
+        "As I mentioned, it covers decorators."
+    )
 
     engine = GeminiEngine(api_key="test-key", model="gemini-3-pro-preview")
     history = [
@@ -53,10 +70,10 @@ def test_ask_includes_conversation_history(mock_genai):
     assert result == "As I mentioned, it covers decorators."
 
     # Verify history produces alternating user/model roles
-    call_kwargs = mock_client.models.generate_content.call_args
+    call_kwargs = mock_client.models.generate_content_stream.call_args
     contents = call_kwargs.kwargs["contents"]
     roles = [c["role"] for c in contents]
-    assert roles == ["user", "model", "user"]  # history user, history model, new question
+    assert roles == ["user", "model", "user"]
 
 
 @patch("ask_video.engines.gemini.genai")

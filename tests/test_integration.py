@@ -22,12 +22,12 @@ def test_full_pipeline_with_captions(mock_yt_api_cls, mock_genai, tmp_path):
         {"text": "Today we learn Python", "start": 2.0, "duration": 2.0},
     ]
 
-    # 2. Gemini returns an answer
+    # 2. Gemini returns a streamed answer
     mock_client = MagicMock()
     mock_genai.Client.return_value = mock_client
-    mock_response = MagicMock()
-    mock_response.text = "The video is a Python tutorial."
-    mock_client.models.generate_content.return_value = mock_response
+    mock_chunk = MagicMock()
+    mock_chunk.text = "The video is a Python tutorial."
+    mock_client.models.generate_content_stream.return_value = [mock_chunk]
 
     # Pipeline
     source = YouTubeSource()
