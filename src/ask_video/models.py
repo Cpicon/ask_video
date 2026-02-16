@@ -2,12 +2,17 @@ import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import NewType
+from typing import NewType, TypedDict
 
 # --- Domain Types ---
 VideoURL = NewType("VideoURL", str)
 VideoID = NewType("VideoID", str)
 TranscriptHash = NewType("TranscriptHash", str)
+
+
+class Message(TypedDict):
+    role: str  # "user" | "assistant"
+    content: str
 
 
 def generate_transcript_hash(video_id: VideoID) -> TranscriptHash:
@@ -33,4 +38,4 @@ class Session:
     id: str
     transcript_id: TranscriptHash
     started_at: datetime
-    messages: list[dict] = field(default_factory=list)
+    messages: list[Message] = field(default_factory=list)

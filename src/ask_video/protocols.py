@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Protocol
 
 from ask_video.models import (
-    Transcript, Session, VideoURL, VideoID, TranscriptHash,
+    Transcript, Session, Message, VideoURL, VideoID, TranscriptHash,
 )
 
 
@@ -27,7 +27,7 @@ class Transcriber(Protocol):
 
 
 class QAEngine(Protocol):
-    def ask(self, transcript: str, question: str, history: list[dict]) -> str:
+    def ask(self, transcript: str, question: str, history: list[Message]) -> str:
         """Answer a question given a transcript and conversation history."""
         ...
 
