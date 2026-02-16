@@ -1,7 +1,7 @@
 # Implementation Plan - End-to-End Integration Test
 
 ## Phase 1: Test Infrastructure Setup
-- [ ] Task: Create a new test file `tests/test_integration_e2e.py` and import necessary modules (`mock`, `pytest`, `ask_video` components).
+- [x] Task: Create a new test file `tests/test_integration_e2e.py` and import necessary modules (`mock`, `pytest`, `ask_video` components). 83b48f2
     - [ ] Task: Create the test file and add imports.
 - [ ] Task: Define a `pytest` fixture to simulate the CLI environment and mock external dependencies (`youtube_transcript_api`, `google.genai`).
     - [ ] Task: specific fixture for mocking YouTube API.
