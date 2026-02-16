@@ -41,19 +41,28 @@ def test_extract_id_invalid(source):
 
 
 @patch("ask_video.sources.youtube.YouTubeTranscriptApi")
-def test_fetch_transcript_returns_timestamped_captions(mock_api, source):
-    mock_api.get_transcript.return_value = [
+def test_fetch_transcript_returns_timestamped_captions(mock_api_cls, source):
+    # Mock the instance-based API: YouTubeTranscriptApi() -> api.list() -> transcript.fetch()
+    mock_api = MagicMock()
+    mock_api_cls.return_value = mock_api
+    mock_transcript = MagicMock()
+    mock_api.list.return_value.find_manually_created_transcript.return_value = mock_transcript
+    mock_transcript.fetch.return_value = [
         {"text": "Hello", "start": 0.0, "duration": 1.0},
         {"text": "world", "start": 65.0, "duration": 1.0},
     ]
+
     result = source.fetch_transcript("https://youtube.com/watch?v=abc123def78")
     assert result == "[0:00] Hello\n[1:05] world"
-    mock_api.get_transcript.assert_called_once_with("abc123def78")
+    mock_api.list.assert_called_once_with("abc123def78")
 
 
 @patch("ask_video.sources.youtube.YouTubeTranscriptApi")
-def test_fetch_transcript_returns_none_when_no_captions(mock_api, source):
-    mock_api.get_transcript.side_effect = Exception("No transcript")
+def test_fetch_transcript_returns_none_when_no_captions(mock_api_cls, source):
+    mock_api = MagicMock()
+    mock_api_cls.return_value = mock_api
+    mock_api.list.side_effect = Exception("No transcript available")
+
     result = source.fetch_transcript("https://youtube.com/watch?v=abc123def78")
     assert result is None
 

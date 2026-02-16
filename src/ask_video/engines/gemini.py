@@ -8,7 +8,7 @@ class GeminiEngine:
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "gemini-2.0-flash",
+        model: str = "gemini-3-pro-preview",
         project: str | None = None,
         location: str | None = None,
     ):

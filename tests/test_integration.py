@@ -11,9 +11,13 @@ from ask_video.models import VideoURL, generate_transcript_hash
 
 @patch("ask_video.engines.gemini.genai")
 @patch("ask_video.sources.youtube.YouTubeTranscriptApi")
-def test_full_pipeline_with_captions(mock_yt_api, mock_genai, tmp_path):
-    # 1. YouTube captions exist
-    mock_yt_api.get_transcript.return_value = [
+def test_full_pipeline_with_captions(mock_yt_api_cls, mock_genai, tmp_path):
+    # 1. YouTube captions exist (instance-based API)
+    mock_api = MagicMock()
+    mock_yt_api_cls.return_value = mock_api
+    mock_transcript = MagicMock()
+    mock_api.list.return_value.find_manually_created_transcript.return_value = mock_transcript
+    mock_transcript.fetch.return_value = [
         {"text": "Welcome to the tutorial", "start": 0.0, "duration": 2.0},
         {"text": "Today we learn Python", "start": 2.0, "duration": 2.0},
     ]

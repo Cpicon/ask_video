@@ -14,7 +14,7 @@ def test_ask_sends_transcript_and_question(mock_genai):
     mock_response.text = "The video discusses Python programming."
     mock_client.models.generate_content.return_value = mock_response
 
-    engine = GeminiEngine(api_key="test-key", model="gemini-2.0-flash")
+    engine = GeminiEngine(api_key="test-key", model="gemini-3-pro-preview")
     result = engine.ask(
         transcript="Welcome to the Python tutorial...",
         question="What is this video about?",
@@ -39,7 +39,7 @@ def test_ask_includes_conversation_history(mock_genai):
     mock_response.text = "As I mentioned, it covers decorators."
     mock_client.models.generate_content.return_value = mock_response
 
-    engine = GeminiEngine(api_key="test-key", model="gemini-2.0-flash")
+    engine = GeminiEngine(api_key="test-key", model="gemini-3-pro-preview")
     history = [
         {"role": "user", "content": "What is this about?"},
         {"role": "assistant", "content": "This is about Python."},
@@ -59,6 +59,23 @@ def test_ask_includes_conversation_history(mock_genai):
     assert roles == ["user", "model", "user"]  # history user, history model, new question
 
 
-def test_gemini_engine_raises_without_api_key():
-    with pytest.raises(ValueError, match="API key"):
-        GeminiEngine(api_key="", model="gemini-2.0-flash")
+@patch("ask_video.engines.gemini.genai")
+def test_gemini_engine_falls_back_to_vertex_without_api_key(mock_genai):
+    """When no API key is provided, GeminiEngine uses Vertex AI via ADC."""
+    mock_client = MagicMock()
+    mock_genai.Client.return_value = mock_client
+
+    engine = GeminiEngine(api_key=None, project="my-project", location="us-central1")
+    mock_genai.Client.assert_called_once_with(
+        vertexai=True, project="my-project", location="us-central1"
+    )
+
+
+@patch("ask_video.engines.gemini.genai")
+def test_gemini_engine_uses_api_key_when_provided(mock_genai):
+    """When API key is provided, GeminiEngine uses AI Studio."""
+    mock_client = MagicMock()
+    mock_genai.Client.return_value = mock_client
+
+    engine = GeminiEngine(api_key="test-key")
+    mock_genai.Client.assert_called_once_with(api_key="test-key", vertexai=False)

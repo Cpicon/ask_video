@@ -12,13 +12,6 @@ from ask_video.models import VideoID, generate_transcript_hash
 runner = CliRunner()
 
 
-@patch.dict(os.environ, {"GEMINI_API_KEY": ""})
-def test_cli_missing_api_key():
-    result = runner.invoke(app, ["https://youtube.com/watch?v=dQw4w9WgXcQ"])
-    assert result.exit_code != 0
-    assert "GEMINI_API_KEY" in result.output
-
-
 @patch("ask_video.cli.run_session")
 @patch("ask_video.cli.create_engine")
 @patch("ask_video.cli.create_source")

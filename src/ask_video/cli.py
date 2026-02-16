@@ -58,7 +58,7 @@ def run_session(transcript_text: str, engine, store: TranscriptStore, transcript
 def main(
     url_input: str = typer.Argument(help="YouTube video URL"),
     transcriber_name: str = typer.Option("whisper", "--transcriber", "-t", help="Transcriber to use"),
-    model: str = typer.Option("gemini-2.0-flash", "--model", "-m", help="LLM model name"),
+    model: str = typer.Option("gemini-3-pro-preview", "--model", "-m", help="LLM model name"),
 ):
     """Load a YouTube video and ask questions about it."""
     api_key = os.environ.get("GEMINI_API_KEY")
