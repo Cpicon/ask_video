@@ -45,6 +45,10 @@ ask_video/
 
 ```python
 class VideoSource(Protocol):
+    def extract_id(self, url: str) -> str:
+        """Extract a canonical video identifier from a URL (e.g. YouTube video ID)."""
+        ...
+
     def fetch_transcript(self, url: str) -> str | None:
         """Try to get an existing transcript (e.g. YouTube captions). Returns None if unavailable."""
         ...
@@ -62,6 +66,19 @@ class QAEngine(Protocol):
     def ask(self, transcript: str, question: str, history: list[dict]) -> str:
         """Answer a question given a transcript and conversation history."""
         ...
+
+class Store(Protocol):
+    def lookup(self, video_id: str) -> Transcript | None:
+        """Look up a cached transcript by video ID. Returns None if not found."""
+        ...
+
+    def save(self, video_id: str, url: str, text: str, source: str) -> Transcript:
+        """Save a transcript to disk, keyed by video ID."""
+        ...
+
+    def save_session(self, session: Session) -> Path:
+        """Save a conversation session to disk."""
+        ...
 ```
 
 ## Data Model
@@ -71,7 +88,7 @@ class QAEngine(Protocol):
 ```python
 @dataclass
 class Transcript:
-    id: str                    # Short UUID
+    id: str                    # Video identifier (e.g. YouTube video ID)
     url: str                   # Source YouTube URL
     text: str                  # The transcription content
     created_at: datetime       # When the transcript was created
@@ -94,7 +111,7 @@ class Session:
 
 ```
 .ask_video/
-├── metadata.json                             # URL → transcript_id index
+├── metadata.json                             # video_id → {url} index
 └── transcripts/
     └── <transcript_id>/
         ├── transcript.txt                    # The transcription text
@@ -106,18 +123,19 @@ class Session:
 ## Data Flow
 
 1. User runs: `ask_video https://youtube.com/watch?v=xyz`
-2. TranscriptStore checks `.ask_video/metadata.json` for cached transcript
-3. If cached: load transcript from disk
-4. If not cached:
-   a. `VideoSource.fetch_transcript()` — try YouTube captions first
+2. `VideoSource.extract_id(url)` extracts canonical video ID (validates URL)
+3. `TranscriptStore.lookup(video_id)` checks cache
+4. If cached: load transcript from disk
+5. If not cached:
+   a. `VideoSource.fetch_transcript(url)` — try YouTube captions first
    b. If no captions: `VideoSource.download_audio()` + `Transcriber.transcribe()`
-   c. Save transcript to `.ask_video/transcripts/` and update `metadata.json`
-5. Enter REPL loop:
+   c. `TranscriptStore.save(video_id, url, text, source)` — cache to disk
+6. Enter REPL loop:
    - User types question
    - `QAEngine.ask(transcript, question, history)` returns answer
    - Display answer, append to session history
    - Repeat until user exits (Ctrl+C or "exit")
-6. On exit: save session to `sessions/<date>_<session_id>.json`
+7. On exit: save session to `sessions/<date>_<session_id>.json`
 
 ## Dependencies
 

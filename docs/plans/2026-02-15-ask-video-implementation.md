@@ -210,8 +210,14 @@ git commit -m "feat: add Transcript and Session data models"
 from pathlib import Path
 from typing import Protocol
 
+from ask_video.models import Transcript, Session
+
 
 class VideoSource(Protocol):
+    def extract_id(self, url: str) -> str:
+        """Extract a canonical video identifier from a URL."""
+        ...
+
     def fetch_transcript(self, url: str) -> str | None:
         """Try to get an existing transcript. Returns None if unavailable."""
         ...
@@ -231,6 +237,20 @@ class QAEngine(Protocol):
     def ask(self, transcript: str, question: str, history: list[dict]) -> str:
         """Answer a question given a transcript and conversation history."""
         ...
+
+
+class Store(Protocol):
+    def lookup(self, video_id: str) -> Transcript | None:
+        """Look up a cached transcript by video ID. Returns None if not found."""
+        ...
+
+    def save(self, video_id: str, url: str, text: str, source: str) -> Transcript:
+        """Save a transcript to disk, keyed by video ID."""
+        ...
+
+    def save_session(self, session: Session) -> Path:
+        """Save a conversation session to disk."""
+        ...
 ```
 
 No tests needed for Protocol definitions — they're just type contracts. They get tested implicitly when we test the concrete implementations.
@@ -239,7 +259,7 @@ No tests needed for Protocol definitions — they're just type contracts. They g
 
 ```bash
 git add src/ask_video/protocols.py
-git commit -m "feat: define VideoSource, Transcriber, QAEngine protocols"
+git commit -m "feat: define VideoSource, Transcriber, QAEngine, Store protocols"
 ```
 
 ---
@@ -255,6 +275,7 @@ git commit -m "feat: define VideoSource, Transcriber, QAEngine protocols"
 `tests/test_store.py`:
 ```python
 import json
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -274,31 +295,48 @@ def test_store_initializes_directory(store: TranscriptStore):
     assert (store.base_dir / "metadata.json").exists()
 
 
-def test_lookup_returns_none_for_unknown_url(store: TranscriptStore):
-    assert store.lookup("https://youtube.com/watch?v=unknown") is None
+def test_lookup_returns_none_for_unknown_id(store: TranscriptStore):
+    assert store.lookup("unknown_id") is None
 
 
 def test_save_and_lookup_transcript(store: TranscriptStore):
     transcript = store.save(
-        url="https://youtube.com/watch?v=abc",
+        video_id="dQw4w9WgXcQ",
+        url="https://youtube.com/watch?v=dQw4w9WgXcQ",
         text="Hello world transcript",
         source="youtube_captions",
     )
-    assert transcript.url == "https://youtube.com/watch?v=abc"
+    assert transcript.id == "dQw4w9WgXcQ"
+    assert transcript.url == "https://youtube.com/watch?v=dQw4w9WgXcQ"
     assert transcript.text == "Hello world transcript"
     assert transcript.source == "youtube_captions"
     assert transcript.path.exists()
 
-    # Lookup should find it
-    loaded = store.lookup("https://youtube.com/watch?v=abc")
+    # Lookup by video_id should find it
+    loaded = store.lookup("dQw4w9WgXcQ")
     assert loaded is not None
     assert loaded.id == transcript.id
     assert loaded.text == "Hello world transcript"
 
 
+def test_lookup_returns_none_when_transcript_dir_missing(store: TranscriptStore):
+    """If metadata references a transcript but the directory was deleted, return None."""
+    transcript = store.save(
+        video_id="abc123def78",
+        url="https://youtube.com/watch?v=abc123def78",
+        text="Some text",
+        source="youtube_captions",
+    )
+    # Simulate user deleting the transcript directory
+    shutil.rmtree(transcript.path)
+
+    assert store.lookup("abc123def78") is None
+
+
 def test_save_session(store: TranscriptStore):
     transcript = store.save(
-        url="https://youtube.com/watch?v=abc",
+        video_id="dQw4w9WgXcQ",
+        url="https://youtube.com/watch?v=dQw4w9WgXcQ",
         text="Hello world",
         source="youtube_captions",
     )
@@ -333,7 +371,6 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'ask_video.store'`
 `src/ask_video/store.py`:
 ```python
 import json
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -354,26 +391,27 @@ class TranscriptStore:
     def _write_metadata(self, data: dict) -> None:
         self._metadata_path.write_text(json.dumps(data, indent=2))
 
-    def lookup(self, url: str) -> Transcript | None:
+    def lookup(self, video_id: str) -> Transcript | None:
         metadata = self._read_metadata()
-        if url not in metadata:
+        if video_id not in metadata:
             return None
-        entry = metadata[url]
-        transcript_dir = self.base_dir / "transcripts" / entry["id"]
+        entry = metadata[video_id]
+        transcript_dir = self.base_dir / "transcripts" / video_id
+        if not transcript_dir.exists():
+            return None
         text = (transcript_dir / "transcript.txt").read_text()
         info = json.loads((transcript_dir / "info.json").read_text())
         return Transcript(
-            id=entry["id"],
-            url=url,
+            id=video_id,
+            url=entry["url"],
             text=text,
             created_at=datetime.fromisoformat(info["created_at"]),
             source=info["source"],
             path=transcript_dir,
         )
 
-    def save(self, url: str, text: str, source: str) -> Transcript:
-        transcript_id = uuid.uuid4().hex[:12]
-        transcript_dir = self.base_dir / "transcripts" / transcript_id
+    def save(self, video_id: str, url: str, text: str, source: str) -> Transcript:
+        transcript_dir = self.base_dir / "transcripts" / video_id
         transcript_dir.mkdir(parents=True, exist_ok=True)
 
         now = datetime.now(timezone.utc)
@@ -388,11 +426,11 @@ class TranscriptStore:
         )
 
         metadata = self._read_metadata()
-        metadata[url] = {"id": transcript_id}
+        metadata[video_id] = {"url": url}
         self._write_metadata(metadata)
 
         return Transcript(
-            id=transcript_id,
+            id=video_id,
             url=url,
             text=text,
             created_at=now,
@@ -422,13 +460,13 @@ class TranscriptStore:
 **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_store.py -v`
-Expected: All 4 tests PASS
+Expected: All 5 tests PASS
 
 **Step 5: Commit**
 
 ```bash
 git add src/ask_video/store.py tests/test_store.py
-git commit -m "feat: add TranscriptStore with metadata index and session persistence"
+git commit -m "feat: add TranscriptStore with video_id cache key and defensive lookup"
 ```
 
 ---
@@ -456,17 +494,33 @@ def source() -> YouTubeSource:
     return YouTubeSource()
 
 
-def test_extract_video_id():
-    source = YouTubeSource()
-    assert source._extract_video_id("https://www.youtube.com/watch?v=dQw4w9WgXcQ") == "dQw4w9WgXcQ"
-    assert source._extract_video_id("https://youtu.be/dQw4w9WgXcQ") == "dQw4w9WgXcQ"
-    assert source._extract_video_id("https://youtube.com/watch?v=dQw4w9WgXcQ&t=10") == "dQw4w9WgXcQ"
+def test_extract_id_standard_url(source):
+    assert source.extract_id("https://www.youtube.com/watch?v=dQw4w9WgXcQ") == "dQw4w9WgXcQ"
 
 
-def test_extract_video_id_invalid():
-    source = YouTubeSource()
+def test_extract_id_short_url(source):
+    assert source.extract_id("https://youtu.be/dQw4w9WgXcQ") == "dQw4w9WgXcQ"
+
+
+def test_extract_id_with_extra_params(source):
+    assert source.extract_id("https://youtube.com/watch?v=dQw4w9WgXcQ&t=10") == "dQw4w9WgXcQ"
+
+
+def test_extract_id_v_not_first_param(source):
+    assert source.extract_id("https://youtube.com/watch?app=desktop&v=dQw4w9WgXcQ") == "dQw4w9WgXcQ"
+
+
+def test_extract_id_shorts_url(source):
+    assert source.extract_id("https://youtube.com/shorts/dQw4w9WgXcQ") == "dQw4w9WgXcQ"
+
+
+def test_extract_id_embed_url(source):
+    assert source.extract_id("https://youtube.com/embed/dQw4w9WgXcQ") == "dQw4w9WgXcQ"
+
+
+def test_extract_id_invalid(source):
     with pytest.raises(ValueError, match="Could not extract video ID"):
-        source._extract_video_id("https://example.com/not-youtube")
+        source.extract_id("https://example.com/not-youtube")
 
 
 @patch("ask_video.sources.youtube.YouTubeTranscriptApi")
@@ -475,15 +529,15 @@ def test_fetch_transcript_returns_captions(mock_api, source):
         {"text": "Hello", "start": 0.0, "duration": 1.0},
         {"text": "world", "start": 1.0, "duration": 1.0},
     ]
-    result = source.fetch_transcript("https://youtube.com/watch?v=abc123")
+    result = source.fetch_transcript("https://youtube.com/watch?v=abc123def78")
     assert result == "Hello\nworld"
-    mock_api.get_transcript.assert_called_once_with("abc123")
+    mock_api.get_transcript.assert_called_once_with("abc123def78")
 
 
 @patch("ask_video.sources.youtube.YouTubeTranscriptApi")
 def test_fetch_transcript_returns_none_when_no_captions(mock_api, source):
     mock_api.get_transcript.side_effect = Exception("No transcript")
-    result = source.fetch_transcript("https://youtube.com/watch?v=abc123")
+    result = source.fetch_transcript("https://youtube.com/watch?v=abc123def78")
     assert result is None
 
 
@@ -494,11 +548,11 @@ def test_download_audio(mock_ytdlp, source, tmp_path):
     mock_ytdlp.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
 
     # Simulate yt-dlp creating the audio file
-    expected_path = tmp_path / "abc123.m4a"
+    expected_path = tmp_path / "abc123def78.m4a"
     expected_path.write_bytes(b"fake audio")
     mock_ydl.prepare_filename.return_value = str(expected_path)
 
-    result = source.download_audio("https://youtube.com/watch?v=abc123", tmp_path)
+    result = source.download_audio("https://youtube.com/watch?v=abc123def78", tmp_path)
     assert result == expected_path
 ```
 
@@ -519,18 +573,18 @@ from youtube_transcript_api import YouTubeTranscriptApi
 
 
 class YouTubeSource:
-    def _extract_video_id(self, url: str) -> str:
-        patterns = [
-            r"(?:youtube\.com/watch\?v=|youtu\.be/)([a-zA-Z0-9_-]{11})",
-        ]
-        for pattern in patterns:
-            match = re.search(pattern, url)
-            if match:
-                return match.group(1)
+    _VIDEO_ID_PATTERN = re.compile(
+        r"(?:[?&]v=|youtu\.be/|/shorts/|/embed/)([a-zA-Z0-9_-]{11})"
+    )
+
+    def extract_id(self, url: str) -> str:
+        match = self._VIDEO_ID_PATTERN.search(url)
+        if match:
+            return match.group(1)
         raise ValueError(f"Could not extract video ID from URL: {url}")
 
     def fetch_transcript(self, url: str) -> str | None:
-        video_id = self._extract_video_id(url)
+        video_id = self.extract_id(url)
         try:
             entries = YouTubeTranscriptApi.get_transcript(video_id)
             return "\n".join(entry["text"] for entry in entries)
@@ -538,7 +592,6 @@ class YouTubeSource:
             return None
 
     def download_audio(self, url: str, output_dir: Path) -> Path:
-        video_id = self._extract_video_id(url)
         opts = {
             "format": "bestaudio/best",
             "outtmpl": str(output_dir / "%(id)s.%(ext)s"),
@@ -554,13 +607,13 @@ class YouTubeSource:
 **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_sources_youtube.py -v`
-Expected: All 5 tests PASS
+Expected: All 11 tests PASS
 
 **Step 5: Commit**
 
 ```bash
 git add src/ask_video/sources/youtube.py tests/test_sources_youtube.py
-git commit -m "feat: add YouTubeSource with caption fetching and audio download"
+git commit -m "feat: add YouTubeSource with broad URL parsing and caption fetching"
 ```
 
 ---
@@ -583,27 +636,37 @@ import pytest
 from ask_video.transcribers.whisper import WhisperTranscriber
 
 
-@patch("ask_video.transcribers.whisper.whisper")
-def test_transcribe_returns_text(mock_whisper, tmp_path):
+def test_transcribe_returns_text(tmp_path):
     audio_file = tmp_path / "audio.m4a"
     audio_file.write_bytes(b"fake audio data")
 
+    mock_whisper = MagicMock()
     mock_model = MagicMock()
     mock_whisper.load_model.return_value = mock_model
     mock_model.transcribe.return_value = {"text": "This is the transcribed text."}
 
-    transcriber = WhisperTranscriber(model_name="base")
-    result = transcriber.transcribe(audio_file)
+    with patch.dict("sys.modules", {"whisper": mock_whisper}):
+        transcriber = WhisperTranscriber(model_name="base")
+        result = transcriber.transcribe(audio_file)
 
     assert result == "This is the transcribed text."
     mock_whisper.load_model.assert_called_once_with("base")
     mock_model.transcribe.assert_called_once_with(str(audio_file))
 
 
-@patch("ask_video.transcribers.whisper.whisper")
-def test_transcribe_default_model(mock_whisper):
+def test_transcribe_default_model():
     transcriber = WhisperTranscriber()
     assert transcriber.model_name == "base"
+
+
+def test_transcribe_raises_when_whisper_not_installed(tmp_path):
+    audio_file = tmp_path / "audio.m4a"
+    audio_file.write_bytes(b"fake audio data")
+
+    with patch.dict("sys.modules", {"whisper": None}):
+        transcriber = WhisperTranscriber()
+        with pytest.raises(RuntimeError, match="pip install"):
+            transcriber.transcribe(audio_file)
 ```
 
 **Step 2: Run test to verify it fails**
@@ -613,11 +676,11 @@ Expected: FAIL with `ModuleNotFoundError`
 
 **Step 3: Write minimal implementation**
 
+Note: `import whisper` is deferred to `_get_model()` so the module can be imported without whisper installed.
+
 `src/ask_video/transcribers/whisper.py`:
 ```python
 from pathlib import Path
-
-import whisper
 
 
 class WhisperTranscriber:
@@ -627,6 +690,12 @@ class WhisperTranscriber:
 
     def _get_model(self):
         if self._model is None:
+            try:
+                import whisper
+            except ImportError:
+                raise RuntimeError(
+                    "Whisper is not installed. Install with: pip install 'ask-video[whisper]'"
+                )
             self._model = whisper.load_model(self.model_name)
         return self._model
 
@@ -639,13 +708,13 @@ class WhisperTranscriber:
 **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_transcribers_whisper.py -v`
-Expected: All 2 tests PASS
+Expected: All 3 tests PASS
 
 **Step 5: Commit**
 
 ```bash
 git add src/ask_video/transcribers/whisper.py tests/test_transcribers_whisper.py
-git commit -m "feat: add WhisperTranscriber with lazy model loading"
+git commit -m "feat: add WhisperTranscriber with deferred import and helpful error"
 ```
 
 ---
@@ -661,7 +730,7 @@ git commit -m "feat: add WhisperTranscriber with lazy model loading"
 `tests/test_engines_gemini.py`:
 ```python
 import os
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, call
 
 import pytest
 
@@ -684,7 +753,13 @@ def test_ask_sends_transcript_and_question(mock_genai):
     )
 
     assert result == "The video discusses Python programming."
-    mock_client.models.generate_content.assert_called_once()
+
+    # Verify system_instruction is in config, not in contents
+    call_kwargs = mock_client.models.generate_content.call_args
+    contents = call_kwargs.kwargs["contents"]
+    assert len(contents) == 1  # Only the user question, no system prompt in contents
+    assert contents[0]["role"] == "user"
+    assert call_kwargs.kwargs["config"].system_instruction is not None
 
 
 @patch("ask_video.engines.gemini.genai")
@@ -708,6 +783,12 @@ def test_ask_includes_conversation_history(mock_genai):
 
     assert result == "As I mentioned, it covers decorators."
 
+    # Verify history produces alternating user/model roles
+    call_kwargs = mock_client.models.generate_content.call_args
+    contents = call_kwargs.kwargs["contents"]
+    roles = [c["role"] for c in contents]
+    assert roles == ["user", "model", "user"]  # history user, history model, new question
+
 
 def test_gemini_engine_raises_without_api_key():
     with pytest.raises(ValueError, match="API key"):
@@ -721,9 +802,12 @@ Expected: FAIL with `ModuleNotFoundError`
 
 **Step 3: Write minimal implementation**
 
+Note: System prompt goes in `GenerateContentConfig.system_instruction`, NOT as a user message. Sending it as a user message causes consecutive user roles which crashes the Gemini API with 400.
+
 `src/ask_video/engines/gemini.py`:
 ```python
 from google import genai
+from google.genai import types
 
 
 class GeminiEngine:
@@ -741,17 +825,18 @@ class GeminiEngine:
             f"TRANSCRIPT:\n{transcript}"
         )
 
-        contents = [{"role": "user", "parts": [{"text": system_prompt}]}]
-
+        contents = []
         for msg in history:
             role = "user" if msg["role"] == "user" else "model"
             contents.append({"role": role, "parts": [{"text": msg["content"]}]})
-
         contents.append({"role": "user", "parts": [{"text": question}]})
 
         response = self._client.models.generate_content(
             model=self.model,
             contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt,
+            ),
         )
         return response.text
 ```
@@ -765,7 +850,7 @@ Expected: All 3 tests PASS
 
 ```bash
 git add src/ask_video/engines/gemini.py tests/test_engines_gemini.py
-git commit -m "feat: add GeminiEngine with conversation history support"
+git commit -m "feat: add GeminiEngine with system_instruction config"
 ```
 
 ---
@@ -778,6 +863,8 @@ git commit -m "feat: add GeminiEngine with conversation history support"
 
 **Step 1: Write the failing test**
 
+Note: Tests import concrete classes for `isinstance` checks, but the factory itself defers imports so that optional dependencies (like whisper) don't crash the CLI on startup.
+
 `tests/test_factory.py`:
 ```python
 from unittest.mock import patch
@@ -785,12 +872,10 @@ from unittest.mock import patch
 import pytest
 
 from ask_video.factory import create_source, create_transcriber, create_engine
-from ask_video.sources.youtube import YouTubeSource
-from ask_video.transcribers.whisper import WhisperTranscriber
-from ask_video.engines.gemini import GeminiEngine
 
 
 def test_create_source_returns_youtube():
+    from ask_video.sources.youtube import YouTubeSource
     source = create_source("youtube")
     assert isinstance(source, YouTubeSource)
 
@@ -801,6 +886,7 @@ def test_create_source_unknown_raises():
 
 
 def test_create_transcriber_returns_whisper():
+    from ask_video.transcribers.whisper import WhisperTranscriber
     transcriber = create_transcriber("whisper")
     assert isinstance(transcriber, WhisperTranscriber)
 
@@ -811,6 +897,7 @@ def test_create_transcriber_unknown_raises():
 
 
 def test_create_engine_returns_gemini():
+    from ask_video.engines.gemini import GeminiEngine
     engine = create_engine("gemini", api_key="test-key")
     assert isinstance(engine, GeminiEngine)
 
@@ -827,38 +914,29 @@ Expected: FAIL with `ModuleNotFoundError`
 
 **Step 3: Write minimal implementation**
 
+Note: All imports are deferred inside factory functions. This prevents `import whisper` from crashing the CLI when whisper is not installed (it's an optional dependency).
+
 `src/ask_video/factory.py`:
 ```python
-from ask_video.sources.youtube import YouTubeSource
-from ask_video.transcribers.whisper import WhisperTranscriber
-from ask_video.engines.gemini import GeminiEngine
-
-
 def create_source(name: str = "youtube"):
-    sources = {
-        "youtube": YouTubeSource,
-    }
-    if name not in sources:
-        raise ValueError(f"Unknown source: {name}. Available: {list(sources.keys())}")
-    return sources[name]()
+    if name == "youtube":
+        from ask_video.sources.youtube import YouTubeSource
+        return YouTubeSource()
+    raise ValueError(f"Unknown source: {name}. Available: ['youtube']")
 
 
 def create_transcriber(name: str = "whisper"):
-    transcribers = {
-        "whisper": WhisperTranscriber,
-    }
-    if name not in transcribers:
-        raise ValueError(f"Unknown transcriber: {name}. Available: {list(transcribers.keys())}")
-    return transcribers[name]()
+    if name == "whisper":
+        from ask_video.transcribers.whisper import WhisperTranscriber
+        return WhisperTranscriber()
+    raise ValueError(f"Unknown transcriber: {name}. Available: ['whisper']")
 
 
 def create_engine(name: str = "gemini", **kwargs):
-    engines = {
-        "gemini": GeminiEngine,
-    }
-    if name not in engines:
-        raise ValueError(f"Unknown engine: {name}. Available: {list(engines.keys())}")
-    return engines[name](**kwargs)
+    if name == "gemini":
+        from ask_video.engines.gemini import GeminiEngine
+        return GeminiEngine(**kwargs)
+    raise ValueError(f"Unknown engine: {name}. Available: ['gemini']")
 ```
 
 **Step 4: Run test to verify it passes**
@@ -870,7 +948,7 @@ Expected: All 6 tests PASS
 
 ```bash
 git add src/ask_video/factory.py tests/test_factory.py
-git commit -m "feat: add factory functions for source, transcriber, and engine"
+git commit -m "feat: add factory functions with deferred imports for optional deps"
 ```
 
 ---
@@ -885,6 +963,7 @@ git commit -m "feat: add factory functions for source, transcriber, and engine"
 
 `tests/test_cli.py`:
 ```python
+import os
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 
@@ -897,31 +976,47 @@ from ask_video.cli import app
 runner = CliRunner()
 
 
-@patch("ask_video.cli.os.environ", {"GEMINI_API_KEY": ""})
+@patch.dict(os.environ, {"GEMINI_API_KEY": ""})
 def test_cli_missing_api_key():
-    result = runner.invoke(app, ["https://youtube.com/watch?v=abc"])
+    result = runner.invoke(app, ["https://youtube.com/watch?v=dQw4w9WgXcQ"])
     assert result.exit_code != 0
     assert "GEMINI_API_KEY" in result.output
 
 
 @patch("ask_video.cli.run_session")
 @patch("ask_video.cli.create_engine")
-@patch("ask_video.cli.create_transcriber")
 @patch("ask_video.cli.create_source")
 @patch("ask_video.cli.TranscriptStore")
-@patch("ask_video.cli.os.environ", {"GEMINI_API_KEY": "test-key"})
-def test_cli_loads_cached_transcript(mock_store_cls, mock_source, mock_transcriber, mock_engine, mock_run):
+@patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"})
+def test_cli_loads_cached_transcript(mock_store_cls, mock_source_fn, mock_engine, mock_run):
     mock_store = MagicMock()
     mock_store_cls.return_value = mock_store
+    mock_source = MagicMock()
+    mock_source_fn.return_value = mock_source
+    mock_source.extract_id.return_value = "dQw4w9WgXcQ"
     mock_transcript = MagicMock()
     mock_transcript.text = "cached text"
-    mock_transcript.url = "https://youtube.com/watch?v=abc"
+    mock_transcript.id = "dQw4w9WgXcQ"
     mock_store.lookup.return_value = mock_transcript
 
-    result = runner.invoke(app, ["https://youtube.com/watch?v=abc"])
+    result = runner.invoke(app, ["https://youtube.com/watch?v=dQw4w9WgXcQ"])
     assert result.exit_code == 0
-    mock_store.lookup.assert_called_once_with("https://youtube.com/watch?v=abc")
+    mock_source.extract_id.assert_called_once_with("https://youtube.com/watch?v=dQw4w9WgXcQ")
+    mock_store.lookup.assert_called_once_with("dQw4w9WgXcQ")
     mock_run.assert_called_once()
+
+
+@patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"})
+@patch("ask_video.cli.create_source")
+@patch("ask_video.cli.TranscriptStore")
+def test_cli_invalid_url_shows_clean_error(mock_store_cls, mock_source_fn):
+    mock_source = MagicMock()
+    mock_source_fn.return_value = mock_source
+    mock_source.extract_id.side_effect = ValueError("Could not extract video ID")
+
+    result = runner.invoke(app, ["https://example.com/not-youtube"])
+    assert result.exit_code != 0
+    assert "Could not extract video ID" in result.output
 ```
 
 **Step 2: Run test to verify it fails**
@@ -965,7 +1060,18 @@ def run_session(transcript_text: str, engine, store: TranscriptStore, transcript
             if not question or question.lower() in ("exit", "quit"):
                 break
 
-            answer = engine.ask(transcript_text, question, session.messages)
+            try:
+                answer = engine.ask(transcript_text, question, session.messages)
+            except Exception as e:
+                console.print(f"[bold red]API Error:[/bold red] {e}")
+                console.print("[dim]Retrying...[/dim]")
+                try:
+                    answer = engine.ask(transcript_text, question, session.messages)
+                except Exception as retry_err:
+                    console.print(f"[bold red]Retry failed:[/bold red] {retry_err}")
+                    console.print("[dim]Please try again.[/dim]")
+                    continue
+
             session.messages.append({"role": "user", "content": question})
             session.messages.append({"role": "assistant", "content": answer})
 
@@ -993,26 +1099,34 @@ def main(
     store = TranscriptStore()
     source = create_source("youtube")
 
+    # Extract video ID early — validates URL and provides cache key
+    try:
+        video_id = source.extract_id(url)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+
     # Check cache first
-    transcript = store.lookup(url)
+    transcript = store.lookup(video_id)
     if transcript:
-        console.print(f"[dim]Loaded cached transcript.[/dim]")
+        console.print("[dim]Loaded cached transcript.[/dim]")
     else:
-        console.print(f"[dim]Fetching transcript...[/dim]")
+        console.print("[dim]Fetching transcript...[/dim]")
         text = source.fetch_transcript(url)
 
         if text:
-            console.print(f"[dim]Found YouTube captions.[/dim]")
-            transcript = store.save(url=url, text=text, source="youtube_captions")
+            console.print("[dim]Found YouTube captions.[/dim]")
+            transcript = store.save(video_id=video_id, url=url, text=text, source="youtube_captions")
         else:
-            console.print(f"[dim]No captions found. Downloading audio for transcription...[/dim]")
+            console.print("[dim]No captions found. Downloading audio for transcription...[/dim]")
             transcriber = create_transcriber(transcriber_name)
             audio_path = source.download_audio(url, store.base_dir / "tmp")
-            console.print(f"[dim]Transcribing with {transcriber_name}...[/dim]")
-            text = transcriber.transcribe(audio_path)
-            transcript = store.save(url=url, text=text, source=transcriber_name)
-            # Clean up audio file
-            audio_path.unlink(missing_ok=True)
+            try:
+                console.print(f"[dim]Transcribing with {transcriber_name}...[/dim]")
+                text = transcriber.transcribe(audio_path)
+                transcript = store.save(video_id=video_id, url=url, text=text, source=transcriber_name)
+            finally:
+                audio_path.unlink(missing_ok=True)
 
     engine = create_engine("gemini", api_key=api_key, model=model)
     run_session(transcript.text, engine, store, transcript.id)
@@ -1025,13 +1139,13 @@ if __name__ == "__main__":
 **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_cli.py -v`
-Expected: All 2 tests PASS
+Expected: All 3 tests PASS
 
 **Step 5: Commit**
 
 ```bash
 git add src/ask_video/cli.py tests/test_cli.py
-git commit -m "feat: add Typer CLI with interactive REPL session"
+git commit -m "feat: add CLI with error handling, retry logic, and audio cleanup"
 ```
 
 ---
@@ -1043,11 +1157,10 @@ git commit -m "feat: add Typer CLI with interactive REPL session"
 
 **Step 1: Write the integration test**
 
-This test verifies the full pipeline works end-to-end using mocks for external services (no real API calls).
+This test verifies the full pipeline works end-to-end using mocks for external services (no real API calls). It exercises the video_id extraction, cache key deduplication, and Gemini system_instruction config.
 
 `tests/test_integration.py`:
 ```python
-from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -1078,21 +1191,33 @@ def test_full_pipeline_with_captions(mock_yt_api, mock_genai, tmp_path):
     source = YouTubeSource()
     store = TranscriptStore(base_dir=tmp_path / ".ask_video")
 
-    url = "https://youtube.com/watch?v=test123"
+    url = "https://youtube.com/watch?v=test123test1"
+    video_id = source.extract_id(url)
+    assert video_id == "test123test1"
+
     text = source.fetch_transcript(url)
     assert text is not None
 
-    transcript = store.save(url=url, text=text, source="youtube_captions")
+    transcript = store.save(video_id=video_id, url=url, text=text, source="youtube_captions")
+    assert transcript.id == video_id
     assert transcript.text == "Welcome to the tutorial\nToday we learn Python"
 
     engine = GeminiEngine(api_key="test-key")
     answer = engine.ask(transcript.text, "What is this video about?", history=[])
     assert answer == "The video is a Python tutorial."
 
-    # Verify transcript is cached
-    cached = store.lookup(url)
+    # Verify transcript is cached by video_id
+    cached = store.lookup(video_id)
     assert cached is not None
     assert cached.id == transcript.id
+
+    # Verify that a different URL for the same video hits the cache
+    alt_url = "https://youtu.be/test123test1"
+    alt_video_id = source.extract_id(alt_url)
+    assert alt_video_id == video_id
+    cached_again = store.lookup(alt_video_id)
+    assert cached_again is not None
+    assert cached_again.id == transcript.id
 ```
 
 **Step 2: Run test**
@@ -1109,7 +1234,7 @@ Expected: All tests PASS
 
 ```bash
 git add tests/test_integration.py
-git commit -m "test: add integration smoke test for full pipeline"
+git commit -m "test: add integration smoke test with video_id cache deduplication"
 ```
 
 ---
