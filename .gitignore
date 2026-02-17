@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.venv/
+.env
+.ask_video/
+
+.DS_Store
+conductor/
+docs/plans/
