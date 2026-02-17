@@ -10,12 +10,13 @@ from rich.panel import Panel
 from ask_video.factory import create_source, create_transcriber, create_engine
 from ask_video.models import VideoURL, Session, generate_transcript_hash
 from ask_video.store import TranscriptStore
+from ask_video.ui.prompt import create_prompt_session, get_user_input
 
 app = typer.Typer(help="Ask questions about YouTube videos using AI.")
 console = Console()
 
 
-def run_session(transcript_text: str, engine, store: TranscriptStore, transcript_id: str):
+def run_session(transcript_text: str, engine, store: TranscriptStore, transcript_id: str, prompt_session=None):
     session = Session(
         id=uuid.uuid4().hex[:8],
         transcript_id=transcript_id,
@@ -27,7 +28,7 @@ def run_session(transcript_text: str, engine, store: TranscriptStore, transcript
 
     try:
         while True:
-            question = console.input("[bold cyan]You:[/bold cyan] ").strip()
+            question = get_user_input(prompt_session)
             if question.lower() in ("exit", "quit"):
                 break
             if not question:
@@ -122,13 +123,14 @@ def main(
                 audio_path.unlink(missing_ok=True)
 
     engine = create_engine(
-        "gemini", 
-        api_key=api_key, 
-        model=model, 
-        project=project, 
+        "gemini",
+        api_key=api_key,
+        model=model,
+        project=project,
         location=location
     )
-    run_session(transcript.text, engine, store, transcript.id)
+    prompt_session = create_prompt_session(history_path=store.base_dir / "prompt_history")
+    run_session(transcript.text, engine, store, transcript.id, prompt_session=prompt_session)
 
 
 if __name__ == "__main__":

@@ -18,19 +18,20 @@ def _run_session_with_capture(markdown_response, questions=None):
     """Helper: run run_session with a captured Rich console and mock engine.
 
     Returns the rendered output as a plain string (no ANSI codes).
+    Uses prompt_session=None so get_user_input() falls back to builtins.input().
     """
     if questions is None:
         questions = ["test question", "exit"]
 
     output = StringIO()
     test_console = Console(file=output, force_terminal=False, width=80)
-    test_console.input = MagicMock(side_effect=questions)
 
     mock_engine = MagicMock()
     mock_engine.ask.return_value = markdown_response
     mock_store = MagicMock()
 
-    with patch("ask_video.cli.console", test_console):
+    with patch("ask_video.cli.console", test_console), \
+         patch("ask_video.ui.prompt.input", side_effect=questions):
         run_session("transcript text", mock_engine, mock_store, "test-id")
 
     return output.getvalue()
