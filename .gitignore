@@ -8,3 +8,5 @@ build/
 .ask_video/
 
 .DS_Store
+conductor/
+docs/plans/
