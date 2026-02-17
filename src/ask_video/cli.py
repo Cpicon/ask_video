@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import typer
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.panel import Panel
 
 from ask_video.factory import create_source, create_transcriber, create_engine
@@ -27,8 +28,10 @@ def run_session(transcript_text: str, engine, store: TranscriptStore, transcript
     try:
         while True:
             question = console.input("[bold cyan]You:[/bold cyan] ").strip()
-            if not question or question.lower() in ("exit", "quit"):
+            if question.lower() in ("exit", "quit"):
                 break
+            if not question:
+                continue
 
             try:
                 answer = engine.ask(transcript_text, question, session.messages)
@@ -45,7 +48,9 @@ def run_session(transcript_text: str, engine, store: TranscriptStore, transcript
             session.messages.append({"role": "user", "content": question})
             session.messages.append({"role": "assistant", "content": answer})
 
-            console.print(f"\n[bold green]Assistant:[/bold green] {answer}\n")
+            console.print("\n[bold green]Assistant:[/bold green]")
+            console.print(Markdown(answer or ""))
+            console.print()
     except (KeyboardInterrupt, EOFError):
         console.print("\n[dim]Exiting...[/dim]")
     finally:

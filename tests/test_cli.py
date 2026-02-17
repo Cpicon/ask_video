@@ -1,15 +1,39 @@
 import os
+from io import StringIO
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 
 import pytest
+from rich.console import Console
 from typer.testing import CliRunner
 
-from ask_video.cli import app
+from ask_video.cli import app, run_session
 from ask_video.models import VideoID, generate_transcript_hash
 
 
 runner = CliRunner()
+
+
+def _run_session_with_capture(markdown_response, questions=None):
+    """Helper: run run_session with a captured Rich console and mock engine.
+
+    Returns the rendered output as a plain string (no ANSI codes).
+    """
+    if questions is None:
+        questions = ["test question", "exit"]
+
+    output = StringIO()
+    test_console = Console(file=output, force_terminal=False, width=80)
+    test_console.input = MagicMock(side_effect=questions)
+
+    mock_engine = MagicMock()
+    mock_engine.ask.return_value = markdown_response
+    mock_store = MagicMock()
+
+    with patch("ask_video.cli.console", test_console):
+        run_session("transcript text", mock_engine, mock_store, "test-id")
+
+    return output.getvalue()
 
 
 @patch("ask_video.cli.run_session")
@@ -46,3 +70,56 @@ def test_cli_invalid_url_shows_clean_error(mock_store_cls, mock_source_fn):
     result = runner.invoke(app, ["https://example.com/not-youtube"])
     assert result.exit_code != 0
     assert "Could not extract video ID" in result.output
+
+
+def test_run_session_renders_markdown():
+    """AI markdown responses should be rendered, not displayed as raw syntax."""
+    rendered = _run_session_with_capture(
+        "## Summary\n**Key points:**\n- First\n- Second"
+    )
+    # Raw markdown delimiters must not appear in rendered output
+    assert "**Key points:**" not in rendered, f"Raw bold markdown found: {rendered}"
+    assert "## Summary" not in rendered, f"Raw header markdown found: {rendered}"
+    # Content text must still be present
+    assert "Summary" in rendered
+    assert "Key points" in rendered
+    assert "First" in rendered
+    assert "Second" in rendered
+    assert "Assistant:" in rendered
+
+
+def test_run_session_renders_markdown_with_brackets():
+    """Square brackets in LLM output must not be interpreted as Rich markup."""
+    rendered = _run_session_with_capture(
+        "See [1] and [important note] for details."
+    )
+    assert "[1]" in rendered, f"Bracket reference lost in output: {rendered}"
+    assert "[important note]" in rendered, f"Bracket text lost in output: {rendered}"
+
+
+def test_run_session_renders_code_blocks():
+    """Fenced code blocks should render without raw backtick delimiters."""
+    rendered = _run_session_with_capture(
+        "Here is code:\n```python\nprint('hello')\n```"
+    )
+    assert "print" in rendered
+    assert "hello" in rendered
+    assert "```" not in rendered, f"Raw code fence found in output: {rendered}"
+
+
+def test_run_session_handles_empty_response():
+    """Empty engine response should not crash; Assistant label still appears."""
+    rendered = _run_session_with_capture("")
+    assert "Assistant:" in rendered
+
+
+def test_run_session_skips_empty_lines():
+    """Empty input lines should be skipped, not treated as exit signal."""
+    rendered = _run_session_with_capture(
+        "The answer is 42.",
+        questions=["first question", "", "", "second question", "exit"],
+    )
+    # Both questions should have been answered (empty lines skipped)
+    assert rendered.count("Assistant:") == 2, (
+        f"Expected 2 assistant responses (empty lines skipped), got: {rendered}"
+    )
